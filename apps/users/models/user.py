@@ -6,7 +6,7 @@ from collections import OrderedDict
 
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager
 from django.core import signing
 from django.db import models
 from django.utils.translation import ugettext_lazy as _
@@ -14,6 +14,9 @@ from django.utils import timezone
 from django.shortcuts import reverse
 
 from common.utils import get_signer, date_expired_default
+from common.models import common_settings
+from orgs.mixins import OrgManager
+from orgs.utils import current_org
 
 
 __all__ = ['User']
@@ -30,27 +33,71 @@ class User(AbstractUser):
         (ROLE_USER, _('User')),
         (ROLE_APP, _('Application'))
     )
+    OTP_LEVEL_CHOICES = (
+        (0, _('Disable')),
+        (1, _('Enable')),
+        (2, _("Force enable")),
+    )
+    SOURCE_LOCAL = 'local'
+    SOURCE_LDAP = 'ldap'
+    SOURCE_CHOICES = (
+        (SOURCE_LOCAL, 'Local'),
+        (SOURCE_LDAP, 'LDAP/AD'),
+    )
     id = models.UUIDField(default=uuid.uuid4, primary_key=True)
-    username = models.CharField(max_length=128, unique=True, verbose_name=_('Username'))
+    username = models.CharField(
+        max_length=128, unique=True, verbose_name=_('Username')
+    )
     name = models.CharField(max_length=128, verbose_name=_('Name'))
-    email = models.EmailField(max_length=128, unique=True, verbose_name=_('Email'))
-    groups = models.ManyToManyField('users.UserGroup', related_name='users', blank=True, verbose_name=_('User group'))
-    role = models.CharField(choices=ROLE_CHOICES, default='User', max_length=10, blank=True, verbose_name=_('Role'))
-    avatar = models.ImageField(upload_to="avatar", null=True, verbose_name=_('Avatar'))
-    wechat = models.CharField(max_length=128, blank=True, verbose_name=_('Wechat'))
-    phone = models.CharField(max_length=20, blank=True, null=True, verbose_name=_('Phone'))
-    enable_otp = models.BooleanField(default=False, verbose_name=_('Enable OTP'))
-    secret_key_otp = models.CharField(max_length=16, blank=True)
+    email = models.EmailField(
+        max_length=128, unique=True, verbose_name=_('Email')
+    )
+    groups = models.ManyToManyField(
+        'users.UserGroup', related_name='users',
+        blank=True, verbose_name=_('User group')
+    )
+    role = models.CharField(
+        choices=ROLE_CHOICES, default='User', max_length=10,
+        blank=True, verbose_name=_('Role')
+    )
+    avatar = models.ImageField(
+        upload_to="avatar", null=True, verbose_name=_('Avatar')
+    )
+    wechat = models.CharField(
+        max_length=128, blank=True, verbose_name=_('Wechat')
+    )
+    phone = models.CharField(
+        max_length=20, blank=True, null=True, verbose_name=_('Phone')
+    )
+    otp_level = models.SmallIntegerField(
+        default=0, choices=OTP_LEVEL_CHOICES, verbose_name=_('MFA')
+    )
+    _otp_secret_key = models.CharField(max_length=128, blank=True, null=True)
     # Todo: Auto generate key, let user download
-    _private_key = models.CharField(max_length=5000, blank=True, verbose_name=_('Private key'))
-    _public_key = models.CharField(max_length=5000, blank=True, verbose_name=_('Public key'))
-    comment = models.TextField(max_length=200, blank=True, verbose_name=_('Comment'))
+    _private_key = models.CharField(
+        max_length=5000, blank=True, verbose_name=_('Private key')
+    )
+    _public_key = models.CharField(
+        max_length=5000, blank=True, verbose_name=_('Public key')
+    )
+    comment = models.TextField(
+        max_length=200, blank=True, verbose_name=_('Comment')
+    )
     is_first_login = models.BooleanField(default=True)
-    date_expired = models.DateTimeField(default=date_expired_default, blank=True, null=True, verbose_name=_('Date expired'))
-    created_by = models.CharField(max_length=30, default='', verbose_name=_('Created by'))
+    date_expired = models.DateTimeField(
+        default=date_expired_default, blank=True, null=True,
+        db_index=True, verbose_name=_('Date expired')
+    )
+    created_by = models.CharField(
+        max_length=30, default='', verbose_name=_('Created by')
+    )
+    source = models.CharField(
+        max_length=30, default=SOURCE_LOCAL, choices=SOURCE_CHOICES,
+        verbose_name=_('Source')
+    )
 
     def __str__(self):
-        return self.username
+        return '{0.name}({0.username})'.format(self)
 
     @property
     def password_raw(self):
@@ -64,6 +111,18 @@ class User(AbstractUser):
     @password_raw.setter
     def password_raw(self, password_raw_):
         self.set_password(password_raw_)
+
+    def set_password(self, raw_password):
+        self._set_password = True
+        return super().set_password(raw_password)
+
+    @property
+    def otp_secret_key(self):
+        return signer.unsign(self._otp_secret_key)
+
+    @otp_secret_key.setter
+    def otp_secret_key(self, item):
+        self._otp_secret_key = signer.sign(item)
 
     def get_absolute_url(self):
         return reverse('users:user-detail', args=(self.id,))
@@ -115,7 +174,7 @@ class User(AbstractUser):
             import sshpubkeys
             try:
                 return sshpubkeys.SSHKey(self.public_key)
-            except TabError:
+            except (TabError, TypeError):
                 pass
         return PubKey()
 
@@ -132,6 +191,18 @@ class User(AbstractUser):
             self.role = 'Admin'
         else:
             self.role = 'User'
+
+    @property
+    def admin_orgs(self):
+        from orgs.models import Organization
+        return Organization.get_user_admin_orgs(self)
+
+    @property
+    def is_org_admin(self):
+        if self.is_superuser or self.admin_orgs.exists():
+            return True
+        else:
+            return False
 
     @property
     def is_app(self):
@@ -154,8 +225,9 @@ class User(AbstractUser):
         if self.username == 'admin':
             self.role = 'Admin'
             self.is_active = True
-
         super().save(*args, **kwargs)
+        if current_org and current_org.is_real():
+            self.orgs.add(current_org.id)
 
     @property
     def private_token(self):
@@ -200,7 +272,30 @@ class User(AbstractUser):
             return user_default
 
     def generate_reset_token(self):
-        return signer.sign_t({'reset': str(self.id), 'email': self.email}, expires_in=3600)
+        return signer.sign_t(
+            {'reset': str(self.id), 'email': self.email}, expires_in=3600
+        )
+
+    @property
+    def otp_enabled(self):
+        return self.otp_force_enabled or self.otp_level > 0
+
+    @property
+    def otp_force_enabled(self):
+        if common_settings.SECURITY_MFA_AUTH:
+            return True
+        return self.otp_level == 2
+
+    def enable_otp(self):
+        if not self.otp_level == 2:
+            self.otp_level = 1
+
+    def force_enable_otp(self):
+        self.otp_level = 2
+
+    def disable_otp(self):
+        self.otp_level = 0
+        self.otp_secret_key = None
 
     def to_json(self):
         return OrderedDict({
@@ -212,8 +307,10 @@ class User(AbstractUser):
             'is_superuser': self.is_superuser,
             'role': self.get_role_display(),
             'groups': [group.name for group in self.groups.all()],
+            'source': self.get_source_display(),
             'wechat': self.wechat,
             'phone': self.phone,
+            'otp_level': self.otp_level,
             'comment': self.comment,
             'date_expired': self.date_expired.strftime('%Y-%m-%d %H:%M:%S') if self.date_expired is not None else None
         })
@@ -222,7 +319,7 @@ class User(AbstractUser):
     def create_app_user(cls, name, comment):
         app = cls.objects.create(
             username=name, name=name, email='{}@local.domain'.format(name),
-            is_active=False, role='App', enable_otp=False, comment=comment,
+            is_active=False, role='App', comment=comment,
             is_first_login=False, created_by='System'
         )
         access_key = app.create_access_key()

@@ -7,6 +7,12 @@ from ..models import Asset, Node
 from .asset import AssetGrantedSerializer
 
 
+__all__ = [
+    'NodeSerializer', "NodeGrantedSerializer", "NodeAddChildrenSerializer",
+    "NodeAssetsSerializer",
+]
+
+
 class NodeGrantedSerializer(BulkSerializerMixin, serializers.ModelSerializer):
     """
     授权资产组
@@ -20,7 +26,7 @@ class NodeGrantedSerializer(BulkSerializerMixin, serializers.ModelSerializer):
         model = Node
         fields = [
             'id', 'key', 'name', 'value', 'parent',
-            'assets_granted', 'assets_amount',
+            'assets_granted', 'assets_amount', 'org_id',
         ]
 
     @staticmethod
@@ -37,21 +43,40 @@ class NodeGrantedSerializer(BulkSerializerMixin, serializers.ModelSerializer):
 
 
 class NodeSerializer(serializers.ModelSerializer):
-    parent = serializers.SerializerMethodField()
     assets_amount = serializers.SerializerMethodField()
+    tree_id = serializers.SerializerMethodField()
+    tree_parent = serializers.SerializerMethodField()
 
     class Meta:
         model = Node
-        fields = ['id', 'key', 'value', 'parent', 'assets_amount']
+        fields = [
+            'id', 'key', 'value', 'assets_amount',
+            'is_node', 'org_id', 'tree_id', 'tree_parent',
+        ]
         list_serializer_class = BulkListSerializer
 
-    @staticmethod
-    def get_parent(obj):
-        return obj.parent.id
+    def validate(self, data):
+        value = data.get('value')
+        instance = self.instance if self.instance else Node.root()
+        children = instance.parent.get_children().exclude(key=instance.key)
+        values = [child.value for child in children]
+        if value in values:
+            raise serializers.ValidationError(
+                'The same level node name cannot be the same'
+            )
+        return data
 
     @staticmethod
     def get_assets_amount(obj):
         return obj.get_all_assets().count()
+
+    @staticmethod
+    def get_tree_id(obj):
+        return obj.key
+
+    @staticmethod
+    def get_tree_parent(obj):
+        return obj.parent_key
 
     def get_fields(self):
         fields = super().get_fields()
@@ -61,7 +86,7 @@ class NodeSerializer(serializers.ModelSerializer):
 
 
 class NodeAssetsSerializer(serializers.ModelSerializer):
-    assets = serializers.PrimaryKeyRelatedField(many=True, queryset=Asset.objects.all())
+    assets = serializers.PrimaryKeyRelatedField(many=True, queryset = Asset.objects.all())
 
     class Meta:
         model = Node

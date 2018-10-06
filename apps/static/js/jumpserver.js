@@ -62,7 +62,6 @@ function GetTableDataBox() {
          }
         }
     for (i in id_list) {
-        console.log(tabProduct);
         tableData.push(GetRowData(tabProduct.rows[id_list[i]]));
     }
 
@@ -155,9 +154,11 @@ function activeNav() {
 function APIUpdateAttr(props) {
     // props = {url: .., body: , success: , error: , method: ,}
     props = props || {};
-    var success_message = props.success_message || '更新成功!';
-    var fail_message = props.fail_message || '更新时发生未知错误.';
-    var flash_message = true;
+    var user_success_message = props.success_message;
+    var default_success_message = gettext('Update is successful!');
+    var user_fail_message = props.fail_message;
+    var default_failed_message = gettext('An unknown error occurred while updating..');
+    var flash_message = props.flash_message || true;
     if (props.flash_message === false){
         flash_message = false;
     }
@@ -170,18 +171,40 @@ function APIUpdateAttr(props) {
         dataType: props.data_type || "json"
     }).done(function(data, textStatue, jqXHR) {
         if (flash_message) {
-            toastr.success(success_message);
+            var msg = "";
+            if (user_fail_message) {
+                msg = user_success_message;
+            } else {
+                msg = default_success_message;
+            }
+            toastr.success(msg);
         }
         if (typeof props.success === 'function') {
             return props.success(data);
-        } 
+        }
     }).fail(function(jqXHR, textStatus, errorThrown) {
         if (flash_message) {
-            toastr.error(fail_message);
+            var msg = "";
+            console.log(jqXHR);
+            console.log(textStatus);
+            console.log(errorThrown);
+            if (user_fail_message) {
+                msg = user_fail_message;
+            } else if (jqXHR.responseJSON) {
+                if (jqXHR.responseJSON.error) {
+                    msg = jqXHR.responseJSON.error
+                } else if (jqXHR.responseJSON.msg) {
+                    msg = jqXHR.responseJSON.msg
+                }
+            }
+            if (msg === "") {
+                msg = default_failed_message;
+            }
+            toastr.error(msg);
         }
         if (typeof props.error === 'function') {
-            return props.error(jqXHR.responseText);
-        } 
+            return props.error(jqXHR.responseText, jqXHR.status);
+        }
     });
   // return true;
 }
@@ -199,27 +222,70 @@ function objectDelete(obj, name, url, redirectTo) {
             }
         };
         var fail = function() {
-            swal("错误", "删除"+"[ "+name+" ]"+"遇到错误", "error");
+            // swal("错误", "删除"+"[ "+name+" ]"+"遇到错误", "error");
+            swal(gettext('Error'), "[ "+name+" ]" + gettext("Being used by the asset, please unbind the asset first."), "error");
         };
         APIUpdateAttr({
             url: url,
             body: JSON.stringify(body),
             method: 'DELETE',
+            success_message: gettext("Delete the success"),
             success: success,
             error: fail
         });
     }
     swal({
-        title: '你确定删除吗 ?',
+        title: gettext('Are you sure about deleting it?'),
         text: " [" + name + "] ",
         type: "warning",
         showCancelButton: true,
-        cancelButtonText: '取消',
+        cancelButtonText: gettext('Cancel'),
         confirmButtonColor: "#ed5565",
-        confirmButtonText: '确认',
+        confirmButtonText: gettext('Confirm'),
         closeOnConfirm: true,
     }, function () {
-        doDelete()       
+        doDelete()
+    });
+}
+
+function orgDelete(obj, name, url, redirectTo){
+    function doDelete() {
+        var body = {};
+        var success = function() {
+            if (!redirectTo) {
+                $(obj).parent().parent().remove();
+            } else {
+                window.location.href=redirectTo;
+            }
+        };
+        var fail = function(responseText, status) {
+            if (status === 400){
+                swal(gettext("Error"),  "[ " + name + " ] " + gettext("The organization contains undeleted information. Please try again after deleting"), "error");
+            }
+            else if (status === 405){
+                swal(gettext("Error"), " [ "+ name + " ] " + gettext("Do not perform this operation under this organization. Try again after switching to another organization"), "error");
+            }
+        };
+        APIUpdateAttr({
+            url: url,
+            body: JSON.stringify(body),
+            method: 'DELETE',
+            success_message: gettext("Delete the success"),
+            success: success,
+            error: fail
+        });
+    }
+    swal({
+        title: gettext("Please ensure that the following information in the organization has been deleted"),
+        text: gettext("User list、User group、Asset list、Domain list、Admin user、System user、Labels、Asset permission"),
+        type: "warning",
+        showCancelButton: true,
+        cancelButtonText: gettext('Cancel'),
+        confirmButtonColor: "#ed5565",
+        confirmButtonText: gettext('Confirm'),
+        closeOnConfirm: true
+    }, function () {
+        doDelete();
     });
 }
 
@@ -239,9 +305,38 @@ $.fn.serializeObject = function()
     });
     return o;
 };
+
+function makeLabel(data) {
+    return "<label class='detail-key'><b>" + data[0] + ": </b></label>" + data[1] + "</br>"
+}
+
+
+
 var jumpserver = {};
 jumpserver.checked = false;
 jumpserver.selected = {};
+jumpserver.language = {
+    processing: gettext('Loading ...'),
+    search: gettext('Search'),
+    select: {
+        rows: {
+            _:  gettext("Selected item %d"),
+            0: ""
+        }
+    },
+    lengthMenu: gettext("Per page _MENU_"),
+    info: gettext('Displays the results of items _START_ to _END_; A total of _TOTAL_ entries'),
+    infoFiltered: "",
+    infoEmpty: "",
+    zeroRecords: gettext("No match"),
+    emptyTable: gettext('No record'),
+    paginate: {
+        first: "«",
+        previous: "‹",
+        next: "›",
+        last: "»"
+    }
+};
 jumpserver.initDataTable = function (options) {
   // options = {
   //    ele *: $('#dataTable_id'),
@@ -265,7 +360,7 @@ jumpserver.initDataTable = function (options) {
               $(td).html('<input type="checkbox" class="text-center ipt_check" id=99991937>'.replace('99991937', cellData));
           }
       },
-      {className: 'text-center', targets: '_all'}
+      {className: 'text-center', render: $.fn.dataTable.render.text(), targets: '_all'}
   ];
   columnDefs = options.columnDefs ? options.columnDefs.concat(columnDefs) : columnDefs;
   var select = {
@@ -280,27 +375,13 @@ jumpserver.initDataTable = function (options) {
         buttons: [],
         columnDefs: columnDefs,
         ajax: {
-            url: options.ajax_url ,
+            url: options.ajax_url,
             dataSrc: ""
         },
         columns: options.columns || [],
         select: options.select || select,
-        language: {
-            search: "搜索",
-            lengthMenu: "每页  _MENU_",
-            info: "显示第 _START_ 至 _END_ 项结果; 总共 _TOTAL_ 项",
-            infoFiltered:   "",
-            infoEmpty:      "",
-            zeroRecords:    "没有匹配项",
-            emptyTable:     "没有记录",
-            paginate: {
-                first:      "«",
-                previous:   "‹",
-                next:       "›",
-                last:       "»"
-            }
-        },
-        lengthMenu: [[15, 25, 50, -1], [15, 25, 50, "All"]]
+        language: jumpserver.language,
+        lengthMenu: [[10, 15, 25, 50, -1], [10, 15, 25, 50, "All"]]
     });
     table.on('select', function(e, dt, type, indexes) {
         var $node = table[ type ]( indexes ).nodes().to$();
@@ -335,6 +416,16 @@ jumpserver.initDataTable = function (options) {
     return table;
 };
 
+jumpserver.initStaticTable = function (selector) {
+    $(selector).DataTable({
+        "searching": false,
+        "bInfo": false,
+        "paging": false,
+        "order": [],
+        "language": jumpserver.language
+    });
+};
+
 jumpserver.initServerSideDataTable = function (options) {
   // options = {
   //    ele *: $('#dataTable_id'),
@@ -367,9 +458,8 @@ jumpserver.initServerSideDataTable = function (options) {
       };
   var table = ele.DataTable({
         pageLength: options.pageLength || 15,
-        dom: options.dom || '<"#uc.pull-left">flt<"row m-t"<"col-md-8"<"#op.col-md-6"><"col-md-6 text-center"i>><"col-md-4"p>>',
+        dom: options.dom || '<"#uc.pull-left">fltr<"row m-t"<"col-md-8"<"#op.col-md-6"><"col-md-6 text-center"i>><"col-md-4"p>>',
         order: options.order || [],
-        // select: options.select || 'multi',
         buttons: [],
         columnDefs: columnDefs,
         serverSide: true,
@@ -424,37 +514,56 @@ jumpserver.initServerSideDataTable = function (options) {
         },
         columns: options.columns || [],
         select: options.select || select,
-        language: {
-            search: "搜索",
-            lengthMenu: "每页  _MENU_",
-            info: "显示第 _START_ 至 _END_ 项结果; 总共 _TOTAL_ 项",
-            infoFiltered:   "",
-            infoEmpty:      "",
-            zeroRecords:    "没有匹配项",
-            emptyTable:     "没有记录",
-            paginate: {
-                first:      "«",
-                previous:   "‹",
-                next:       "›",
-                last:       "»"
-            }
-        },
-        lengthMenu: [[15, 25, 50], [15, 25, 50]]
+        language: jumpserver.language,
+        lengthMenu: [[10, 15, 25, 50], [10, 15, 25, 50]]
     });
+    table.selected = [];
     table.on('select', function(e, dt, type, indexes) {
         var $node = table[ type ]( indexes ).nodes().to$();
         $node.find('input.ipt_check').prop('checked', true);
-        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = true
+        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = true;
+        if (type === 'row') {
+            var rows = table.rows(indexes).data();
+            $.each(rows, function (id, row) {
+                if (row.id){
+                    table.selected.push(row.id)
+                }
+            })
+        }
     }).on('deselect', function(e, dt, type, indexes) {
         var $node = table[ type ]( indexes ).nodes().to$();
         $node.find('input.ipt_check').prop('checked', false);
-        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = false
-    }).
-    on('draw', function(){
+        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = false;
+        if (type === 'row') {
+            var rows = table.rows(indexes).data();
+            $.each(rows, function (id, row) {
+                if (row.id){
+                    var index = table.selected.indexOf(row.id);
+                    if (index > -1){
+                        table.selected.splice(index, 1)
+                    }
+                }
+            })
+        }
+    }).on('draw', function(){
         $('#op').html(options.op_html || '');
         $('#uc').html(options.uc_html || '');
+        var table_data = [];
+        $.each(table.rows().data(), function (id, row) {
+            if (row.id) {
+                table_data.push(row.id)
+            }
+        });
+
+        $.each(table.selected, function (id, data) {
+            var index = table_data.indexOf(data);
+            if (index > -1){
+                table.rows(index).select()
+            }
+        });
     });
-    $('.ipt_check_all').on('click', function() {
+    var table_id = table.settings()[0].sTableId;
+    $('#' + table_id + ' .ipt_check_all').on('click', function() {
         if ($(this).prop("checked")) {
             $(this).closest('table').find('.ipt_check').prop('checked', true);
             table.rows({search:'applied', page:'current'}).select();
@@ -567,4 +676,100 @@ function setUrlParam(url, name, value) {
         url += newParam.join("&")
     }
     return url
+}
+
+// 校验密码-改变规则颜色
+function checkPasswordRules(password, minLength) {
+    if (wordMinLength(password, minLength)) {
+        $('#rule_SECURITY_PASSWORD_MIN_LENGTH').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_MIN_LENGTH').css('color', '#908a8a')
+    }
+
+    if (wordUpperCase(password)) {
+        $('#rule_SECURITY_PASSWORD_UPPER_CASE').css('color', 'green');
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_UPPER_CASE').css('color', '#908a8a')
+    }
+
+    if (wordLowerCase(password)) {
+        $('#rule_SECURITY_PASSWORD_LOWER_CASE').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_LOWER_CASE').css('color', '#908a8a')
+    }
+
+    if (wordNumber(password)) {
+        $('#rule_SECURITY_PASSWORD_NUMBER').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_NUMBER').css('color', '#908a8a')
+    }
+
+    if (wordSpecialChar(password)) {
+        $('#rule_SECURITY_PASSWORD_SPECIAL_CHAR').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_SPECIAL_CHAR').css('color', '#908a8a')
+    }
+}
+
+// 最小长度
+function wordMinLength(word, minLength) {
+    //var minLength = {{ min_length }};
+    var re = new RegExp("^(.{" + minLength + ",})$");
+    return word.match(re)
+}
+// 大写字母
+function wordUpperCase(word) {
+    return word.match(/([A-Z]+)/)
+}
+// 小写字母
+function wordLowerCase(word) {
+    return word.match(/([a-z]+)/)
+}
+// 数字字符
+function wordNumber(word) {
+    return word.match(/([\d]+)/)
+}
+// 特殊字符
+function wordSpecialChar(word) {
+    return word.match(/[`,~,!,@,#,\$,%,\^,&,\*,\(,\),\-,_,=,\+,\{,\},\[,\],\|,\\,;,',:,",\,,\.,<,>,\/,\?]+/)
+}
+
+// 显示弹窗密码规则
+function popoverPasswordRules(password_check_rules, $el) {
+    var message = "";
+    jQuery.each(password_check_rules, function (idx, rules) {
+        message += "<li id=" + rules.id + " style='list-style-type:none;'> <i class='fa fa-check-circle-o' style='margin-right:10px;' ></i>" + rules.label + "</li>";
+    });
+    //$('#id_password_rules').html(message);
+    $el.html(message)
+}
+
+// 初始化弹窗popover
+function initPopover($container, $progress, $idPassword, $el, password_check_rules, i18n_fallback){
+    options = {};
+    // User Interface
+    options.ui = {
+        container: $container,
+        viewports: {
+            progress: $progress
+            //errors: $('.popover-content')
+        },
+        showProgressbar: true,
+        showVerdictsInsideProgressBar: true
+    };
+    options.i18n = {
+        fallback: i18n_fallback,
+        t: function (key) {
+            var result = '';
+            result = options.i18n.fallback[key];
+            return result === key ? '' : result;
+        }
+    };
+    $idPassword.pwstrength(options);
+    popoverPasswordRules(password_check_rules, $el);
 }

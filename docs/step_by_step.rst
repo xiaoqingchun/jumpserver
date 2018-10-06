@@ -26,7 +26,7 @@
 
 ::
 
-    $ yum -y install wget sqlite-devel xz gcc automake zlib-devel openssl-devel epel-release
+    $ yum -y install wget sqlite-devel xz gcc automake zlib-devel openssl-devel epel-release git
 
 **1.2 编译安装**
 
@@ -49,7 +49,7 @@
     # 看到下面的提示符代表成功，以后运行 Jumpserver 都要先运行以上 source 命令，以下所有命令均在该虚拟环境中运行
     (py3) [root@localhost py3]
 
-二. 安装 Jumpserver 0.5.0
+二. 安装 Jumpserver 1.0.0
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **2.1 下载或 Clone 项目**
@@ -201,7 +201,7 @@
 
 Luna 已改为纯前端，需要 Nginx 来运行访问
 
-访问（https://github.com/jumpserver/luna/releases）下载对应 release 包，直接解压，不需要编译
+访问（https://github.com/jumpserver/luna/releases）下载对应版本的 release 包，直接解压，不需要编译
 
 4.1 解压 Luna
 
@@ -222,22 +222,33 @@ Luna 已改为纯前端，需要 Nginx 来运行访问
 .. code:: shell
 
 
+    # 注意：这里一定要改写一下本机的IP地址, 否则会出错
 
-    docker run -d \
-      -p 8081:8080 \
+    docker run --name jms_guacamole -d \
+      -p 8081:8080 -v /opt/guacamole/key:/config/guacamole/key \
+      -e JUMPSERVER_KEY_DIR=/config/guacamole/key \
       -e JUMPSERVER_SERVER=http://<填写本机的IP地址>:8080 \
       registry.jumpserver.org/public/guacamole:latest
 
 这里所需要注意的是 guacamole 暴露出来的端口是 8081，若与主机上其他端口冲突请自定义一下。
 
-修改 JUMPSERVER SERVER 的配置，填上 Jumpserver 的内网地址
+再次强调：修改 JUMPSERVER_SERVER 环境变量的配置，填上 Jumpserver 的内网地址, 这时
+去 Jumpserver-会话管理-终端管理 接受[Gua]开头的一个注册
+
+
 
 六. 配置 Nginx 整合各组件
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 6.1 安装 Nginx 根据喜好选择安装方式和版本
 
-6.2 配置文件
+.. code:: shell
+
+    yum -y install nginx
+
+
+6.2 准备配置文件 修改 /etc/nginx/nginx.conf
+
 
 ::
 
@@ -286,5 +297,11 @@ Luna 已改为纯前端，需要 Nginx 来运行访问
     }
 
 6.3 运行 Nginx
+
+::
+
+    nginx -t
+    service nginx start
+
 
 6.4 访问 http://192.168.244.144

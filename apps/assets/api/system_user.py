@@ -13,21 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework_bulk import BulkModelViewSet
+from rest_framework.pagination import LimitOffsetPagination
+
 from common.utils import get_logger
-from ..hands import IsSuperUser, IsSuperUserOrAppUser
-from ..models import SystemUser
+from common.permissions import IsOrgAdmin, IsOrgAdminOrAppUser
+from ..models import SystemUser, Asset
 from .. import serializers
 from ..tasks import push_system_user_to_assets_manual, \
-    test_system_user_connectability_manual
+    test_system_user_connectability_manual, push_system_user_a_asset_manual, \
+    test_system_user_connectability_a_asset
 
 
 logger = get_logger(__file__)
 __all__ = [
     'SystemUserViewSet', 'SystemUserAuthInfoApi',
-    'SystemUserPushApi', 'SystemUserTestConnectiveApi'
+    'SystemUserPushApi', 'SystemUserTestConnectiveApi',
+    'SystemUserAssetsListView', 'SystemUserPushToAssetApi',
+    'SystemUserTestAssetConnectabilityApi',
 ]
 
 
@@ -37,26 +43,21 @@ class SystemUserViewSet(BulkModelViewSet):
     """
     queryset = SystemUser.objects.all()
     serializer_class = serializers.SystemUserSerializer
-    permission_classes = (IsSuperUserOrAppUser,)
+    permission_classes = (IsOrgAdminOrAppUser,)
 
 
-class SystemUserAuthInfoApi(generics.RetrieveAPIView):
+class SystemUserAuthInfoApi(generics.RetrieveUpdateDestroyAPIView):
     """
     Get system user auth info
     """
     queryset = SystemUser.objects.all()
-    permission_classes = (IsSuperUserOrAppUser,)
+    permission_classes = (IsOrgAdminOrAppUser,)
+    serializer_class = serializers.SystemUserAuthSerializer
 
-    def retrieve(self, request, *args, **kwargs):
-        system_user = self.get_object()
-        data = {
-            'id': system_user.id,
-            'name': system_user.name,
-            'username': system_user.username,
-            'password': system_user.password,
-            'private_key': system_user.private_key,
-        }
-        return Response(data)
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.clear_auth()
+        return Response(status=204)
 
 
 class SystemUserPushApi(generics.RetrieveAPIView):
@@ -64,12 +65,15 @@ class SystemUserPushApi(generics.RetrieveAPIView):
     Push system user to cluster assets api
     """
     queryset = SystemUser.objects.all()
-    permission_classes = (IsSuperUser,)
+    permission_classes = (IsOrgAdmin,)
 
     def retrieve(self, request, *args, **kwargs):
         system_user = self.get_object()
-        push_system_user_to_assets_manual.delay(system_user)
-        return Response({"msg": "Task created"})
+        nodes = system_user.nodes.all()
+        for node in nodes:
+            system_user.assets.add(*tuple(node.get_all_assets()))
+        task = push_system_user_to_assets_manual.delay(system_user)
+        return Response({"task": task.id})
 
 
 class SystemUserTestConnectiveApi(generics.RetrieveAPIView):
@@ -77,9 +81,49 @@ class SystemUserTestConnectiveApi(generics.RetrieveAPIView):
     Push system user to cluster assets api
     """
     queryset = SystemUser.objects.all()
-    permission_classes = (IsSuperUser,)
+    permission_classes = (IsOrgAdmin,)
 
     def retrieve(self, request, *args, **kwargs):
         system_user = self.get_object()
-        test_system_user_connectability_manual.delay(system_user)
-        return Response({"msg": "Task created"})
+        task = test_system_user_connectability_manual.delay(system_user)
+        return Response({"task": task.id})
+
+
+class SystemUserAssetsListView(generics.ListAPIView):
+    permission_classes = (IsOrgAdmin,)
+    serializer_class = serializers.AssetSerializer
+    pagination_class = LimitOffsetPagination
+    filter_fields = ("hostname", "ip")
+    search_fields = filter_fields
+
+    def get_object(self):
+        pk = self.kwargs.get('pk')
+        return get_object_or_404(SystemUser, pk=pk)
+
+    def get_queryset(self):
+        system_user = self.get_object()
+        return system_user.assets.all()
+
+
+class SystemUserPushToAssetApi(generics.RetrieveAPIView):
+    queryset = SystemUser.objects.all()
+    permission_classes = (IsOrgAdmin,)
+
+    def retrieve(self, request, *args, **kwargs):
+        system_user = self.get_object()
+        asset_id = self.kwargs.get('aid')
+        asset = get_object_or_404(Asset, id=asset_id)
+        task = push_system_user_a_asset_manual.delay(system_user, asset)
+        return Response({"task": task.id})
+
+
+class SystemUserTestAssetConnectabilityApi(generics.RetrieveAPIView):
+    queryset = SystemUser.objects.all()
+    permission_classes = (IsOrgAdmin,)
+
+    def retrieve(self, request, *args, **kwargs):
+        system_user = self.get_object()
+        asset_id = self.kwargs.get('aid')
+        asset = get_object_or_404(Asset, id=asset_id)
+        task = test_system_user_connectability_a_asset.delay(system_user, asset)
+        return Response({"task": task.id})

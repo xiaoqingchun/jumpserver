@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from ..models import SystemUser
+from .base import AuthSerializer
 
 
 class SystemUserSerializer(serializers.ModelSerializer):
@@ -16,6 +17,13 @@ class SystemUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = SystemUser
         exclude = ('_password', '_private_key', '_public_key')
+
+    def get_field_names(self, declared_fields, info):
+        fields = super(SystemUserSerializer, self).get_field_names(declared_fields, info)
+        fields.extend([
+            'get_login_mode_display',
+        ])
+        return fields
 
     @staticmethod
     def get_unreachable_assets(obj):
@@ -33,7 +41,20 @@ class SystemUserSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def get_assets_amount(obj):
-        return len(obj.assets)
+        return len(obj.get_assets())
+
+
+class SystemUserAuthSerializer(AuthSerializer):
+    """
+    系统用户认证信息
+    """
+
+    class Meta:
+        model = SystemUser
+        fields = [
+            "id", "name", "username", "protocol",
+            "login_mode", "password", "private_key",
+        ]
 
 
 class AssetSystemUserSerializer(serializers.ModelSerializer):
@@ -42,7 +63,10 @@ class AssetSystemUserSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = SystemUser
-        fields = ('id', 'name', 'username', 'priority', 'protocol',  'comment',)
+        fields = (
+            'id', 'name', 'username', 'priority',
+            'protocol',  'comment', 'login_mode'
+        )
 
 
 class SystemUserSimpleSerializer(serializers.ModelSerializer):
